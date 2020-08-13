@@ -547,10 +547,11 @@ func (a *HostAwaitility) WaitForToolchainStatus(criteria ...ToolchainStatusWaitC
 	return *toolchainStatus, err
 }
 
+const hostOperatorMetrics = "host-operator-metrics"
+
 // WaitForMetricsService waits until there's a service called `host-operator-metrics` in the host
 // operator namespace
 func (a *HostAwaitility) WaitForMetricsService() (corev1.Service, error) {
-	name := "host-operator-metrics"
 	var metricsSvc *corev1.Service
 	err := wait.Poll(a.RetryInterval, a.Timeout, func() (done bool, err error) {
 		metricsSvc = &corev1.Service{}
@@ -558,12 +559,12 @@ func (a *HostAwaitility) WaitForMetricsService() (corev1.Service, error) {
 		err = a.Client.Get(context.TODO(),
 			types.NamespacedName{
 				Namespace: a.Ns,
-				Name:      name,
+				Name:      hostOperatorMetrics,
 			},
 			metricsSvc)
 		if err != nil {
 			if errors.IsNotFound(err) {
-				a.T.Logf("Waiting for availability of service '%s' in namespace '%s'...\n", name, a.Ns)
+				a.T.Logf("Waiting for availability of service '%s' in namespace '%s'...", hostOperatorMetrics, a.Ns)
 				return false, nil
 			}
 			return false, err
@@ -572,4 +573,33 @@ func (a *HostAwaitility) WaitForMetricsService() (corev1.Service, error) {
 		return true, nil
 	})
 	return *metricsSvc, err
+}
+
+// WaitUntilMetricsCounterHasValue waits until the exposed metric counter with of the given family
+// and with the given label key/value has reached the expected value
+func (a *HostAwaitility) WaitUntilMetricsCounterHasValue(family string, labelKey string, labelValue string, expectedValue float64) error {
+	err := wait.Poll(a.RetryInterval, a.Timeout, func() (done bool, err error) {
+		value, err := getCounter(hostOperatorMetrics, family, labelKey, labelValue)
+		if value != expectedValue {
+			a.T.Logf("Waiting for counter '%s{%s:%s}' to reach '%v' (currently: %v)", family, labelKey, labelValue, expectedValue, value)
+			return false, nil
+		}
+		return true, nil
+	})
+	return err
+}
+
+// DeletePods deletes the pods matching the given criteria
+func (a *HostAwaitility) DeletePods(criteria ...client.ListOption) error {
+	pods := corev1.PodList{}
+	err := a.Client.List(context.TODO(), &pods, criteria...)
+	if err != nil {
+		return err
+	}
+	for _, p := range pods.Items {
+		if err := a.Client.Delete(context.TODO(), &p); err != nil {
+			return err
+		}
+	}
+	return nil
 }
